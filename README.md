@@ -1,238 +1,384 @@
-launch instance t2.medium for better experience
+# Strapi + Postgres Deployment on AWS using Terraform and Docker
 
-install docker:
+This project demonstrates deploying a Strapi application with a PostgreSQL database on an AWS EC2 instance using Terraform and Docker. The deployment uses Docker containers for both the Strapi app and Postgres, and automates setup via Terraform and EC2 `user_data`.
 
-yum install docker -y && systemctl start docker
+---
 
-install terraform:
+# 1️⃣ Launch EC2 Instance
+
+Instance type: t2.medium (2 vCPU, 4 GB RAM — good for running Strapi + Postgres).
+
+OS: Amazon Linux 2.
+
+Key pair: select or create a key pair for SSH.
+
+Security Group: allow at least:
+
+SSH: 22 from your IP
+
+HTTP: 80 (if you want web access)
+
+Strapi port: 1337 (optional for testing)
+
+# 2️⃣ Connect to EC2 via SSH
+
+ssh -i <your-key.pem> ec2-user@<EC2_PUBLIC_IP>
+
+
+# 3️⃣ Install Docker
+
+sudo yum update -y
+
+sudo yum install docker -y
+
+sudo systemctl start docker
+
+sudo systemctl enable docker
+
+docker --version
+
+# 4️⃣ Install Terraform
 
 sudo yum install -y yum-utils
 
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
 
-sudo yum -y install terraform
+sudo yum install -y terraform
 
 terraform version
 
-npx create-strapi-app my-strapi-app --quickstart  (--quickstart takes sqlite database but its not use for production)
+# 1️⃣ Create Strapi App
 
-npx create-strapi-app my-strapi-app (add postgres manually)
+For development/testing (SQLite):
 
- Please log in or sign up. Skip
+npx create-strapi-app my-strapi-app --quickstart
+
+Quickstart uses SQLite, which is not recommended for production.
+
+# For production with PostgreSQL:
+
+npx create-strapi-app my-strapi-app
+
 ? Do you want to use the default database (sqlite) ? No
+
 ? Choose your default database client postgres
+
 ? Database name: postgres-db
+
 ? Host: postgres
+
 ? Port: 5432
+
 ? Username: postgres-user
-? Password: *****************
+
+? Password: <your-password>
+
 ? Enable SSL connection: No
+
 ? Start with an example structure & data? Yes
+
 ? Start with Typescript? Yes
+
 ? Install dependencies with npm? Yes
+
 ? Initialize a git repository? Yes
+
 ? Participate in anonymous A/B testing (to improve Strapi)? No
+
+Notes:
+
+Replace postgres-db, postgres-user, and password with your Postgres credentials.
+
+Host: postgres is used if you run Postgres in a Docker container and the service name is postgres.
+
+If Postgres is on another server, use its IP or DNS.
+
+# 2️⃣ Navigate to your project
 
 cd my-strapi-app
 
-tree
+# 1️⃣ Project Structure
 .
 └── folder
-    ├── compose.yml
-    ---- Dockerfile
-    └── terraform
+    ├── compose.yml       # Docker Compose for Strapi + Postgres
+    
+    ├── Dockerfile        # Builds Strapi Docker image
+    
+    └── terraform         # Terraform scripts for production EC2
+    
         ├── ec2.tf
+        
         ├── output.tf
+        
         ├── provider.tf
+        
         ├── sg.tf
+        
         ├── user_data.sh
+        
         └── variables.tf
+        
 
-
-vim Dockerfile
+# 2️⃣ Dockerfile (Strapi)
 
 FROM node:18-alpine as build
+
 WORKDIR /app
 
 RUN apk add --no-cache python3 make g++
 
 COPY package*.json ./
+
 RUN npm install
 
 COPY . .
+
 RUN npm run build
 
 FROM node:18-alpine
+
 WORKDIR /app
 
 COPY --from=build /app ./
+
 EXPOSE 1337
+
 CMD ["npm", "run", "start"]
 
-using docker file we are generating strapi image and also we need postgers image for database.
+
+# ✅ Multi-stage build reduces image size.
+
+# 3️⃣ Build and Push Strapi Docker Image
 
 docker build -t sairam/strapi:latest .
 
-# Login to Docker Hub
-docker login ----> using username and password
+docker login
 
-# Push image
 docker push sairam/strapi:latest
 
-so i am creating compose file to check whether both the images are running or not on my local.
 
-vim compose.yml
+Make sure you use your Docker Hub username (sairam in this case).
+
+If it’s a private repository, you’ll need credentials on the production server to pull the image.
+
+# 1️⃣ docker-compose.yml Overview
+
+Create a compose.yml with Strapi + Postgres so you can test locally:
+
 version: '3'
 
 services:
 
   postgres:
+  
     image: postgres:15-alpine
+    
     container_name: postgres-container
+    
     restart: always
+    
     environment:
+    
       POSTGRES_USER: strapi
+      
       POSTGRES_PASSWORD: strapi
+      
       POSTGRES_DB: strapi
+      
     networks:
+    
       - strapi-network
 
   strapi:
+  
     image: sairambadari/strapi:latest
+    
     container_name: strapi-container
+    
     restart: always
+    
     environment:
+    
       DATABASE_CLIENT: postgres
+      
       DATABASE_NAME: strapi
-      DATABASE_HOST: postgres   # <-- must match service name
+      
+      DATABASE_HOST: postgres
+      
       DATABASE_PORT: 5432
+      
       DATABASE_USERNAME: strapi
+      
       DATABASE_PASSWORD: strapi
+      
     ports:
+    
       - "1337:1337"
+      
     depends_on:
+    
       - postgres
+      
     networks:
+    
       - strapi-network
 
 networks:
+
   strapi-network:
+  
     name: strapi-network
+
+Strapi container depends on Postgres.
+
+Both containers share the same custom network: strapi-network.
+
+Strapi connects to Postgres using the service name postgres as host.
+
+# 2️⃣ Run Containers Locally
 
 docker compose up -d
 
 docker ps
 
-docker push sairambadari/postgres:15-alpine
+You should see both strapi-container and postgres-container running.
 
-this will create containers using compose file
+# 3️⃣ Test Database Connectivity
 
-we can access the application using instance ip+1337.
+docker exec -it postgres-container bash
 
-we can also check database whether its storing data or not, through postgres container
-
-docker exec -it 35f1242c293e bash
-
-psql -U strapi -d strapi (login using my database username and password)
+psql -U strapi -d strapi
 
 SELECT id, firstname, lastname, email, created_at
-FROM admin_users;                  (checking its storing in postgres database).
+
+FROM admin_users;
 
 exit
 
-now the main goal is deploying strapi application in production instance using terraform based on this images.
+This confirms that Strapi is successfully storing data in Postgres.
 
-mkdir terraform (creating seperate folder for terraform files)\
+# 4️⃣ Access the Application
 
-cd terraform
+Open your browser and go to:
 
-vim  ec2.tf
+http://<LOCAL_IP_OR_INSTANCE_IP>:1337
+
+Strapi admin panel should be accessible and functional.
+
+# 5️⃣ Push Postgres Image 
+
+docker push sairambadari/postgres:15-alpine
+
+Normally you can use the official postgres:15-alpine from Docker Hub, but if you have custom changes, push it to your repository.
+
+# 1️⃣ Terraform Folder Structure
+
+terraform/
+
+├── ec2.tf          # EC2 instance resource
+
+├── output.tf       # Outputs public IP and DNS
+
+├── provider.tf     # AWS provider
+
+├── sg.tf           # Security group
+
+├── user_data.sh    # Script to install Docker & run containers
+
+└── variables.tf    # Instance type & AMI variables
+
+# 2️⃣ EC2 Resource (ec2.tf)
+
 resource "aws_instance" "strapi" {
-  tags = {
-    Name = "STRAPI-TASK-4"
-    env  = "production"
-  }
+
   ami               = var.ami_id
+  
   instance_type     = var.instance_type
+  
   key_name          = "first-kp"
+  
   availability_zone = "ap-south-1a"
+  
   security_groups   = [aws_security_group.strapi-sg.name]
+
   root_block_device {
+  
     volume_size = 20
+    
   }
+
+  tags = {
+  
+    Name = "STRAPI-TASK-4"
+    
+    env  = "production"
+    
+  }
+
   user_data = file("user_data.sh")
+  
 }
 
+Launches EC2 with Docker installed via user_data.sh.
 
-vim output.tf
-output "strapi_public_ip" {
-  value = aws_instance.strapi.public_ip
-}
+Automatically pulls and runs Postgres and Strapi containers.
 
-output "strapi_public_dns" {
-  value = aws_instance.strapi.public_dns
-}
+# 3️⃣ Security Group (sg.tf)
 
-vim provider.tf
-provider "aws" {
-  region = "ap-south-1"
-}
-
-vim sg.tf
 resource "aws_security_group" "strapi-sg" {
+
   name        = "strapi-sg"
+  
   description = "allow traffic to strapi"
 
   ingress {
+  
     from_port   = 1337
+    
     to_port     = 1337
+    
     protocol    = "tcp"
+    
     cidr_blocks = ["0.0.0.0/0"]
+    
   }
 
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  ingress { from_port = 22; to_port = 22; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
+  
+  ingress { from_port = 80; to_port = 80; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
+  
+  ingress { from_port = 5432; to_port = 5432; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
 
-  ingress {
-    description = "HTTP"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "HTTP"
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  egress { from_port = 0; to_port = 0; protocol = "-1"; cidr_blocks = ["0.0.0.0/0"] }
+  
 }
 
-vim user_data.sh
+Allows SSH, HTTP, Strapi (1337), and Postgres (5432) traffic.
+
+⚠️ Recommendation: Restrict 5432 to your IP in production.
+
+# 4️⃣ User Data Script (user_data.sh)
+
 #!/bin/bash
+
 sudo yum update -y
+
 sudo yum install -y docker
+
 sudo systemctl enable docker
+
 sudo systemctl start docker
 
 docker run -d --name postgres-container \
+
   -e POSTGRES_USER=strapi \
+  
   -e POSTGRES_PASSWORD=strapi \
+  
   -e POSTGRES_DB=strapi \
+  
   -p 5432:5432 \
+  
   postgres:15-alpine
 
 sleep 10
@@ -240,24 +386,87 @@ sleep 10
 POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' postgres-container)
 
 docker run -itd --name strapi-container \
+
   -e DATABASE_CLIENT=postgres \
+  
   -e DATABASE_NAME=strapi \
+  
   -e DATABASE_HOST=$POSTGRES_IP \
+  
   -e DATABASE_PORT=5432 \
+  
   -e DATABASE_USERNAME=strapi \
+  
   -e DATABASE_PASSWORD=strapi \
+  
   -p 1337:1337 \
+  
   sairambadari/strapi:latest
 
-vim variables.tf
+Installs Docker, pulls images, and runs containers.
+
+Dynamically retrieves Postgres container IP to configure Strapi.
+
+# 5️⃣ Terraform Variables (variables.tf)
+
 variable "instance_type" {
+
   default = "t2.micro"
+  
 }
 
 variable "ami_id" {
+
   default = "ami-01b6d88af12965bb6"
+  
 }
 
-this will create infra in production server and we can acess through instance public ip + 1337 port no. or else we are generating public dns using output.tf we can also access application.
+You can override these when running terraform apply if you want t2.medium for better performance.
 
-This is the final project.
+# 6️⃣ Outputs (output.tf)
+
+output "strapi_public_ip" {
+
+  value = aws_instance.strapi.public_ip
+  
+}
+
+output "strapi_public_dns" {
+
+  value = aws_instance.strapi.public_dns
+  
+}
+
+Once Terraform finishes, you can access Strapi via:
+
+http://<strapi_public_ip>:1337
+
+or
+
+http://<strapi_public_dns>:1337
+
+# 7️⃣ Deployment Steps
+
+terraform init
+
+terraform plan
+
+terraform apply --auto-approve
+
+After apply, Terraform outputs the public IP and DNS of your EC2 instance.
+
+# 8️⃣ Access Application
+
+Strapi admin panel: http://<EC2_PUBLIC_IP>:1337/admin
+
+Postgres: connect via docker exec -it postgres-container psql -U strapi -d strapi
+
+# 9️⃣ Best Practices
+
+Use t2.medium or larger for production Strapi.
+
+Use Docker volumes to persist Postgres data.
+
+Do not expose Postgres 5432 publicly in production.
+
+✅ This setup gives you a fully automated Strapi + Postgres production deployment on AWS using Terraform and Docker.
