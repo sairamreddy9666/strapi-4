@@ -71,6 +71,14 @@ CMD ["npm", "run", "start"]
 
 using docker file we are generating strapi image and also we need postgers image for database.
 
+docker build -t sairam/strapi:latest .
+
+# Login to Docker Hub
+docker login ----> using username and password
+
+# Push image
+docker push sairam/strapi:latest
+
 so i am creating compose file to check whether both the images are running or not on my local.
 
 vim compose.yml
@@ -114,6 +122,8 @@ networks:
 docker compose up -d
 
 docker ps
+
+docker push sairambadari/postgres:15-alpine
 
 this will create containers using compose file
 
